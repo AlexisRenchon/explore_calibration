@@ -30,7 +30,10 @@ y_all = [EKP.get_obs(y_obs[i]) for i in 1:n_iterations]
 #get_obs_noise
 
 # Get all contrained parameters
-#get_ϕ
+params = EKP.get_ϕ(prior, eki)
+param_dict = Dict(i => [params[i][:, j] for j in 1:size(params[i], 2)] for i in eachindex(params))
+
+# how to get the names?
 
 # to consider: Δ_t, rng, ... what else might be insightful?
 
@@ -155,7 +158,7 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, s
     p_g = heatmap!(ax_g, lons, lats, g, colorrange = limits_p)
     p_y = heatmap!(ax_y, lons, lats, y, colorrange = limits_p)
 
-    cb_g = Colorbar(fig[1,3], colorrange = limits_p)
+    cb = Colorbar(fig[1,3], colorrange = limits_p)
     return fig
 end
 
@@ -165,7 +168,59 @@ app = App() do
     menu_m = Dropdown(1:n_ensembles)
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
     maps = update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, seasonal_g_data, seasonal_y_data, lons, lats)
-    return DOM.div(menu_var, menu_iter, menu_m, menu_season, maps)
+    params_current = @lift(param_dict[$(menu_iter.value)][$(menu_m.value)])
+    params_name = [
+    "pc",
+    "sc",
+    "a",
+    "K_sat_plant",
+    "α_leaf_scaler",
+    "τ_leaf_scaler",
+    "α_soil_dry_scaler",
+    "α_snow",
+    "α_soil_scale",
+]
+
+    return DOM.div(
+                   style="display: flex; flex-direction: row; flex-wrap: wrap; gap: 20px; max-width: 1200px; margin: 0 auto;",
+                   DOM.div(
+                           style="flex: 0 0 300px;",
+                           Card(
+                                title="Parameters",
+                                DOM.div(
+                                        style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
+                                        DOM.div("Variable", menu_var),
+                                        DOM.div("Iteration", menu_iter),
+                                        DOM.div("Ensemble", menu_m),
+                                        DOM.div("Season", menu_season)
+                                       )
+                               )
+                          ),
+                   DOM.div(
+                           style="flex: 0 0 300px;",
+                           Card(
+                                title="Parameter Values",
+                                DOM.div(
+                                        style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
+                                        @lift(begin
+                                                  param_values = $(params_current)
+                                                  [DOM.div(
+                                                           style="display: flex; justify-content: space-between; padding: 5px; border-bottom: 1px solid #eee;",
+                                                           DOM.span(style="font-weight: bold;", params_name[i]),
+                                                           DOM.span(round(param_values[i], digits=4))
+                                                          ) for i in 1:length(params_name)]
+                                              end)
+                                       )
+                               )
+                          ),
+                   DOM.div(
+                           style="flex: 1; min-width: 1700px;",
+                           Card(
+                                title="Map Visualization",
+                                maps
+                               )
+                          )
+                  )
 end
 # http://localhost:9384/browser-display
 
