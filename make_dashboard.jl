@@ -132,16 +132,6 @@ lats = map(x -> x[2], locations)
 
 ########## Web dashboard using data in memory #############
 
-fig = Figure(size = (1600, 900), fontsize = 14)
-ax_y = Axis(fig[1,1],
-            title="y (era5 target)",
-    xlabel="Longitude",
-    ylabel="Latitude")
-ax_g = Axis(fig[1,2],
-            title="g (model output)",
-    xlabel="Longitude",
-    ylabel="Latitude")
-
 function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, seasonal_g_data, seasonal_y_data, lons, lats)
     m_v = menu_var.value
     m_i = menu_iter.value
@@ -163,6 +153,15 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, s
 end
 
 app = App() do
+    fig = Figure(size = (1600, 900), fontsize = 14)
+    ax_y = Axis(fig[1,1],
+                title="y (era5 target)",
+                xlabel="Longitude",
+                ylabel="Latitude")
+    ax_g = Axis(fig[1,2],
+                title="g (model output)",
+                xlabel="Longitude",
+                ylabel="Latitude")
     menu_var = Dropdown(["lhf", "shf", "swu", "lwu"])
     menu_iter = Dropdown(1:n_iterations)
     menu_m = Dropdown(1:n_ensembles)
@@ -233,4 +232,5 @@ end
 # infinity of dashboards can be hosted on server and publicly served - can explore different calibration (eki objects)
 # this is scalable, expandable and generalizable, dashboard made from eki and served, could be automated in CI
 # not esthetic right now, but can be as pretty as Manuscript figures (just not a prio)
+# the dashboard allows access to 4 (variables) * 4 (plots) * 8 (iterations) * 19 (ensemble) *  4 (seasons) = 10,000 plots...
 
