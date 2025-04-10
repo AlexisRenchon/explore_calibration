@@ -1,7 +1,9 @@
 import EnsembleKalmanProcesses as EKP
+import GeoMakie as GM
 using WGLMakie
 using Bonito
 using JLD2
+using Statistics
 
 ########### Load raw data ##################################
 
@@ -132,7 +134,7 @@ lats = map(x -> x[2], locations)
 
 ########## Web dashboard using data in memory #############
 
-function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, seasonal_g_data, seasonal_y_data, lons, lats)
+function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
     m_v = menu_var.value
     m_i = menu_iter.value
     m_m = menu_m.value
@@ -148,25 +150,51 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, s
     p_g = heatmap!(ax_g, lons, lats, g, colorrange = limits_p)
     p_y = heatmap!(ax_y, lons, lats, y, colorrange = limits_p)
 
-    cb = Colorbar(fig[1,3], colorrange = limits_p)
+    cl = @lift($m_v * " (W m^-2)")
+    cb = Colorbar(fig[1, 3], colorrange = limits_p, label = cl, height = 300, tellheight = false)
+
+    y_seasonal_means = @lift(mean.([seasonal_y_data[$m_i][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
+    g_seasonal_means = @lift(mean.([seasonal_g_data[$m_i][$m_m][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
+
+    min_sm = @lift(minimum(vcat($y_seasonal_means, $g_seasonal_means)))
+    max_sm = @lift(maximum(vcat($y_seasonal_means, $g_seasonal_means)))
+    limits_sm = @lift(($min_sm, $max_sm))
+    lines!(ax_sm, 1:4, y_seasonal_means, color= :green)
+    lines!(ax_sm, 1:4, g_seasonal_means, color= :black)
+
+    seasons = ["winter", "spring", "summer", "fall"]
+    current_s = @lift(findfirst(==($m_s), seasons))
+    current_s = @lift([$current_s, $current_s])
+    lines!(ax_sm, current_s, [0, 1000], color= :red, linewidth = 3)
+    @lift(ylims!(ax_sm, $min_sm, $max_sm))
+
     return fig
 end
 
 app = App() do
     fig = Figure(size = (1600, 900), fontsize = 14)
-    ax_y = Axis(fig[1,1],
-                title="y (era5 target)",
-                xlabel="Longitude",
-                ylabel="Latitude")
-    ax_g = Axis(fig[1,2],
-                title="g (model output)",
-                xlabel="Longitude",
-                ylabel="Latitude")
+    ax_y = GM.GeoAxis(
+                      fig[1, 1];
+                      dest = "+proj=wintri",
+                      title = "y (ERA5 obs)",
+                     )
+    lines!(ax_y, GM.coastlines())
+    ax_g = GM.GeoAxis(
+                      fig[1, 2];
+                      dest = "+proj=wintri",
+                      title = "g (ClimaLand output)",
+                     )
+    lines!(ax_g, GM.coastlines())
+    ax_sm = Axis(fig[2, 1],
+                 title="Global mean (W m^-2)",
+                limits=(0.99, 4.01, 0, 400),
+                # xticklabel = ["winter", "spring", "summer", "fall"],
+                )
     menu_var = Dropdown(["lhf", "shf", "swu", "lwu"])
     menu_iter = Dropdown(1:n_iterations)
     menu_m = Dropdown(1:n_ensembles)
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
-    maps = update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, seasonal_g_data, seasonal_y_data, lons, lats)
+    maps = update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
     params_current = @lift(param_dict[$(menu_iter.value)][$(menu_m.value)])
     params_name = [
     "pc",
