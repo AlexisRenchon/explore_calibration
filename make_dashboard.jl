@@ -132,6 +132,19 @@ seasonal_g_data = add_seasonal_access_g(g_data)
 lons = map(x -> x[1], locations)
 lats = map(x -> x[2], locations)
 
+# Calculate mean lat weight averaged
+function cosine_weighted_global_mean(values::Vector{Float64}, lats::Vector{Float64})
+    @assert length(values) == length(lats) "Length mismatch between values and latitudes"
+
+    weights = cosd.(lats)  # cosd for degrees
+    numerator = sum(values .* weights)
+    denominator = sum(weights)
+
+    return numerator / denominator
+end
+
+
+
 ########## Web dashboard using data in memory #############
 
 function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
@@ -153,8 +166,11 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, a
     cl = @lift($m_v * " (W m^-2)")
     cb = Colorbar(fig[1, 3], colorrange = limits_p, label = cl, height = 300, tellheight = false)
 
-    y_seasonal_means = @lift(mean.([seasonal_y_data[$m_i][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
-    g_seasonal_means = @lift(mean.([seasonal_g_data[$m_i][$m_m][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
+    y_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_y_data[$m_i][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
+    g_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_g_data[$m_i][$m_m][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
+
+#    y_seasonal_means = @lift(mean.([seasonal_y_data[$m_i][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
+#    g_seasonal_means = @lift(mean.([seasonal_g_data[$m_i][$m_m][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
 
     min_sm = @lift(minimum(vcat($y_seasonal_means, $g_seasonal_means)))
     max_sm = @lift(maximum(vcat($y_seasonal_means, $g_seasonal_means)))
@@ -196,6 +212,8 @@ app = App() do
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
     maps = update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
     params_current = @lift(param_dict[$(menu_iter.value)][$(menu_m.value)])
+    params_initial = param_dict[1][1]
+    params_relative = @lift($params_current ./ params_initial)
     params_name = [
     "pc",
     "sc",
@@ -240,6 +258,90 @@ app = App() do
                                        )
                                )
                           ),
+                       DOM.div(
+        style="flex: 0 0 300px;",
+        Card(
+            title="Relative to Initial",
+            DOM.div(
+                style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
+                @lift(begin
+                    relative_values = $(params_relative)
+                    [DOM.div(
+                        style="display: flex; justify-content: space-between; padding: 5px; border-bottom: 1px solid #eee;",
+                        DOM.span(style="font-weight: bold;", params_name[i]),
+                        DOM.div(
+                            style=string(
+                                "display: flex; align-items: center; ",
+                                "color: ", relative_values[i] > 1 ? "green" : (relative_values[i] < 1 ? "red" : "black")
+                            ),
+                            DOM.span(round(relative_values[i], digits=2)),
+                            DOM.span(
+                                style="margin-left: 5px; font-size: 0.8em;",
+                                relative_values[i] > 1 ? "↑" : (relative_values[i] < 1 ? "↓" : "")
+                            )
+                        )
+                    ) for i in 1:length(params_name)]
+                end)
+            )
+        )
+    ),
+                           DOM.div(
+        style="flex: 0 0 350px;",
+        Card(
+            title="Error Metrics",
+            DOM.div(
+                style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
+                DOM.div(
+                    style="margin-bottom: 10px;",
+                    DOM.h4(style="margin: 0 0 10px 0; color: #333;", "Absolute Errors"),
+                    @lift(begin
+                        current_iter = $(menu_iter.value)
+                        DOM.div(
+                            style="display: flex; flex-direction: column; gap: 5px;",
+                            [DOM.div(
+                                style=string(
+                                    "display: flex; justify-content: space-between; ",
+                                    "padding: 5px; border-bottom: 1px solid #eee; ",
+                                    i == current_iter ? "background-color: #f0f8ff; font-weight: bold;" : ""
+                                ),
+                                DOM.span("Iteration $(i)"),
+                                DOM.span(string(round(errors[i]/1e6, digits=2), " × 10⁶"))
+                            ) for i in 1:length(errors)]
+                        )
+                    end)
+                ),
+                DOM.div(
+                    DOM.h4(style="margin: 0 0 10px 0; color: #333;", "Normalized Errors (%)"),
+                    @lift(begin
+                        current_iter = $(menu_iter.value)
+                        DOM.div(
+                            style="display: flex; flex-direction: column; gap: 5px;",
+                            [DOM.div(
+                                style=string(
+                                    "display: flex; justify-content: space-between; ",
+                                    "padding: 5px; border-bottom: 1px solid #eee; ",
+                                    "color: ", i > 1 && normalized_errors[i] < normalized_errors[i-1] ? "green" : "inherit", "; ",
+                                    i == current_iter ? "background-color: #f0f8ff; font-weight: bold;" : ""
+                                ),
+                                DOM.span("Iteration $(i)"),
+                                DOM.div(
+                                    style="display: flex; align-items: center;",
+                                    DOM.span(round(normalized_errors[i], digits=1)),
+                                    i > 1 ? DOM.span(
+                                        style=string(
+                                            "margin-left: 5px; font-size: 0.8em; ",
+                                            "color: ", normalized_errors[i] < normalized_errors[i-1] ? "green" : "red"
+                                        ),
+                                        normalized_errors[i] < normalized_errors[i-1] ? "↓" : "↑"
+                                    ) : DOM.span("")
+                                )
+                            ) for i in 1:length(normalized_errors)]
+                        )
+                    end)
+                )
+            )
+        )
+    ),
                    DOM.div(
                            style="flex: 1; min-width: 1700px;",
                            Card(
