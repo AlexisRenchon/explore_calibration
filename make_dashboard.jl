@@ -4,6 +4,7 @@ using WGLMakie
 using Bonito
 using JLD2
 using Statistics
+using Printf
 
 ########### Load raw data ##################################
 
@@ -169,20 +170,21 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, a
     y_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_y_data[$m_i][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
     g_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_g_data[$m_i][$m_m][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
 
-#    y_seasonal_means = @lift(mean.([seasonal_y_data[$m_i][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
-#    g_seasonal_means = @lift(mean.([seasonal_g_data[$m_i][$m_m][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
+    #    y_seasonal_means = @lift(mean.([seasonal_y_data[$m_i][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
+    #    g_seasonal_means = @lift(mean.([seasonal_g_data[$m_i][$m_m][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
 
     min_sm = @lift(minimum(vcat($y_seasonal_means, $g_seasonal_means)))
     max_sm = @lift(maximum(vcat($y_seasonal_means, $g_seasonal_means)))
     limits_sm = @lift(($min_sm, $max_sm))
-    lines!(ax_sm, 1:4, y_seasonal_means, color= :green)
-    lines!(ax_sm, 1:4, g_seasonal_means, color= :black)
+    lines_y = lines!(ax_sm, 1:4, y_seasonal_means, color= :green)
+    lines_g = lines!(ax_sm, 1:4, g_seasonal_means, color= :black)
 
     seasons = ["winter", "spring", "summer", "fall"]
     current_s = @lift(findfirst(==($m_s), seasons))
     current_s = @lift([$current_s, $current_s])
     lines!(ax_sm, current_s, [0, 1000], color= :red, linewidth = 3)
     @lift(ylims!(ax_sm, $min_sm, $max_sm))
+    axislegend(ax_sm, [lines_y, lines_g], ["era5", "ClimaLand"])
 
     return fig
 end
@@ -201,155 +203,151 @@ app = App() do
                       title = "g (ClimaLand output)",
                      )
     lines!(ax_g, GM.coastlines())
-    ax_sm = Axis(fig[2, 1],
-                 title="Global mean (W m^-2)",
-                limits=(0.99, 4.01, 0, 400),
-                # xticklabel = ["winter", "spring", "summer", "fall"],
-                )
     menu_var = Dropdown(["lhf", "shf", "swu", "lwu"])
     menu_iter = Dropdown(1:n_iterations)
     menu_m = Dropdown(1:n_ensembles)
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
+
+    ylabel_sm = @lift($(menu_var.value) * " (W m^-2)")
+    ax_sm = Axis(fig[2, 1],
+                 title= "Global mean by season",
+                 limits=(0.99, 4.01, 0, 400),
+                 ylabel= ylabel_sm,
+                 xticks = (1:4, ["winter", "spring", "summer", "fall"]),
+    xlabel = "Season",
+                 # xticklabel = ["winter", "spring", "summer", "fall"],
+                )
     maps = update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
     params_current = @lift(param_dict[$(menu_iter.value)][$(menu_m.value)])
     params_initial = param_dict[1][1]
     params_relative = @lift($params_current ./ params_initial)
     params_name = [
-    "pc",
-    "sc",
-    "a",
-    "K_sat_plant",
-    "α_leaf_scaler",
-    "τ_leaf_scaler",
-    "α_soil_dry_scaler",
-    "α_snow",
-    "α_soil_scale",
-]
-
+                   "pc",
+                   "sc",
+                   "a",
+                   "K_sat_plant",
+                   "α_leaf_scaler",
+                   "τ_leaf_scaler",
+                   "α_soil_dry_scaler",
+                   "α_snow",
+                   "α_soil_scale",
+                  ]
     return DOM.div(
-                   style="display: flex; flex-direction: row; flex-wrap: wrap; gap: 20px; max-width: 1200px; margin: 0 auto;",
-                   DOM.div(
-                           style="flex: 0 0 300px;",
-                           Card(
-                                title="Parameters",
-                                DOM.div(
-                                        style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
-                                        DOM.div("Variable", menu_var),
-                                        DOM.div("Iteration", menu_iter),
-                                        DOM.div("Ensemble", menu_m),
-                                        DOM.div("Season", menu_season)
-                                       )
-                               )
-                          ),
-                   DOM.div(
-                           style="flex: 0 0 300px;",
-                           Card(
-                                title="Parameter Values",
-                                DOM.div(
-                                        style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
-                                        @lift(begin
-                                                  param_values = $(params_current)
-                                                  [DOM.div(
-                                                           style="display: flex; justify-content: space-between; padding: 5px; border-bottom: 1px solid #eee;",
-                                                           DOM.span(style="font-weight: bold;", params_name[i]),
-                                                           DOM.span(round(param_values[i], digits=4))
-                                                          ) for i in 1:length(params_name)]
-                                              end)
-                                       )
-                               )
-                          ),
-                       DOM.div(
-        style="flex: 0 0 300px;",
+    style="display: flex; flex-direction: row; flex-wrap: wrap; gap: 20px; max-width: 1600px; margin: 0 auto 0 0;",
+    # Left column
+    DOM.div(
+        style="flex: 0 0 300px; display: flex; flex-direction: column; gap: 20px;",
         Card(
-            title="Relative to Initial",
+            title="Parameters",
             DOM.div(
-                style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
-                @lift(begin
-                    relative_values = $(params_relative)
-                    [DOM.div(
-                        style="display: flex; justify-content: space-between; padding: 5px; border-bottom: 1px solid #eee;",
-                        DOM.span(style="font-weight: bold;", params_name[i]),
-                        DOM.div(
-                            style=string(
-                                "display: flex; align-items: center; ",
-                                "color: ", relative_values[i] > 1 ? "green" : (relative_values[i] < 1 ? "red" : "black")
-                            ),
-                            DOM.span(round(relative_values[i], digits=2)),
-                            DOM.span(
-                                style="margin-left: 5px; font-size: 0.8em;",
-                                relative_values[i] > 1 ? "↑" : (relative_values[i] < 1 ? "↓" : "")
-                            )
-                        )
-                    ) for i in 1:length(params_name)]
-                end)
+                style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
+                DOM.div("Variable", menu_var),
+                DOM.div("Iteration", menu_iter),
+                DOM.div("Ensemble", menu_m),
+                DOM.div("Season", menu_season)
             )
-        )
-    ),
-                           DOM.div(
-        style="flex: 0 0 350px;",
+        ),
         Card(
             title="Error Metrics",
             DOM.div(
                 style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
-                DOM.div(
-                    style="margin-bottom: 10px;",
-                    DOM.h4(style="margin: 0 0 10px 0; color: #333;", "Absolute Errors"),
-                    @lift(begin
-                        current_iter = $(menu_iter.value)
+                @lift(begin
+                    current_iter = $(menu_iter.value)
+                    DOM.div(
+                        style="display: flex; flex-direction: column; gap: 5px;",
                         DOM.div(
-                            style="display: flex; flex-direction: column; gap: 5px;",
-                            [DOM.div(
+                            style="display: grid; grid-template-columns: 0.8fr 1.1fr 1.1fr; border-bottom: 1px solid #999; padding-bottom: 5px; font-weight: bold;",
+                            DOM.span("Iteration"),
+                            DOM.span("Absolute"),
+                            DOM.span("Normalized (%)")
+                        ),
+                        [DOM.div(
+                            style=string(
+                                "display: grid; grid-template-columns: 0.8fr 1.1fr 1.1fr; ",
+                                "padding: 5px; border-bottom: 1px solid #eee; ",
+                                i == current_iter ? "background-color: #f0f8ff; font-weight: bold;" : ""
+                            ),
+                            DOM.span("$(i)"),
+                            DOM.span(string(round(errors[i]/1e6, digits=2), " × 10⁶")),
+                            DOM.div(
                                 style=string(
-                                    "display: flex; justify-content: space-between; ",
-                                    "padding: 5px; border-bottom: 1px solid #eee; ",
-                                    i == current_iter ? "background-color: #f0f8ff; font-weight: bold;" : ""
+                                    "display: flex; align-items: center; ",
+                                    "color: ", i > 1 && normalized_errors[i] < normalized_errors[i-1] ? "green" : "inherit"
                                 ),
-                                DOM.span("Iteration $(i)"),
-                                DOM.span(string(round(errors[i]/1e6, digits=2), " × 10⁶"))
-                            ) for i in 1:length(errors)]
-                        )
-                    end)
-                ),
-                DOM.div(
-                    DOM.h4(style="margin: 0 0 10px 0; color: #333;", "Normalized Errors (%)"),
-                    @lift(begin
-                        current_iter = $(menu_iter.value)
-                        DOM.div(
-                            style="display: flex; flex-direction: column; gap: 5px;",
-                            [DOM.div(
-                                style=string(
-                                    "display: flex; justify-content: space-between; ",
-                                    "padding: 5px; border-bottom: 1px solid #eee; ",
-                                    "color: ", i > 1 && normalized_errors[i] < normalized_errors[i-1] ? "green" : "inherit", "; ",
-                                    i == current_iter ? "background-color: #f0f8ff; font-weight: bold;" : ""
-                                ),
-                                DOM.span("Iteration $(i)"),
-                                DOM.div(
-                                    style="display: flex; align-items: center;",
-                                    DOM.span(round(normalized_errors[i], digits=1)),
-                                    i > 1 ? DOM.span(
-                                        style=string(
-                                            "margin-left: 5px; font-size: 0.8em; ",
-                                            "color: ", normalized_errors[i] < normalized_errors[i-1] ? "green" : "red"
-                                        ),
-                                        normalized_errors[i] < normalized_errors[i-1] ? "↓" : "↑"
-                                    ) : DOM.span("")
-                                )
-                            ) for i in 1:length(normalized_errors)]
-                        )
-                    end)
-                )
+                                DOM.span(round(normalized_errors[i], digits=1)),
+                                i > 1 ? DOM.span(
+                                    style=string(
+                                        "margin-left: 5px; font-size: 0.8em; ",
+                                        "color: ", normalized_errors[i] < normalized_errors[i-1] ? "green" : "red"
+                                    ),
+                                    normalized_errors[i] < normalized_errors[i-1] ? "↓" : "↑"
+                                ) : DOM.span("")
+                            )
+                        ) for i in 1:length(errors)]
+                    )
+                end)
             )
         )
     ),
-                   DOM.div(
-                           style="flex: 1; min-width: 1700px;",
-                           Card(
-                                title="Map Visualization",
-                                maps
-                               )
-                          )
-                  )
+    # Middle column
+    DOM.div(
+        style="flex: 0 0 380px; display: flex; flex-direction: column; gap: 20px;",
+        Card(
+            title="Parameter Values",
+            DOM.div(
+                style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
+                @lift(begin
+                    param_values = $(params_current)
+                    relative_values = $(params_relative)
+                    DOM.div(
+                        style="display: flex; flex-direction: column; gap: 5px;",
+                        DOM.div(
+                            style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; border-bottom: 1px solid #999; padding-bottom: 5px; font-weight: bold;",
+                            DOM.span("Parameter"),
+                            DOM.span("Value"),
+                            DOM.span("Relative")
+                        ),
+                        [DOM.div(
+                            style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; padding: 5px; border-bottom: 1px solid #eee;",
+                            DOM.span(style="font-weight: bold;", params_name[i]),
+                            DOM.span(
+                                # Format based on magnitude
+                                let val = param_values[i]
+                                    if abs(val) < 0.001 && val != 0
+                                        @sprintf("%.3e", val)  # Scientific for very small numbers
+                                    elseif abs(val) > 10000
+                                        @sprintf("%.3e", val)  # Scientific for very large numbers
+                                    else
+                                        @sprintf("%.4g", val)  # General format with 4 significant digits
+                                    end
+                                end
+                            ),
+                            DOM.div(
+                                style=string(
+                                    "display: flex; align-items: center; ",
+                                    "color: ", relative_values[i] > 1 ? "green" : (relative_values[i] < 1 ? "red" : "black")
+                                ),
+                                DOM.span(@sprintf("%.2f", relative_values[i])),  # Always 2 decimal places
+                                DOM.span(
+                                    style="margin-left: 5px; font-size: 0.8em;",
+                                    relative_values[i] > 1 ? "↑" : (relative_values[i] < 1 ? "↓" : "")
+                                )
+                            )
+                        ) for i in 1:length(params_name)]
+                    )
+                end)
+            )
+        )
+    ),
+    # Right column (maps)
+    DOM.div(
+        style="flex: 1; min-width: 800px;",
+        Card(
+            title="Map Visualization",
+            maps
+        )
+    )
+)
 end
 # http://localhost:9384/browser-display
 
