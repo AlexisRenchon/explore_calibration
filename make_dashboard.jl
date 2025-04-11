@@ -148,7 +148,7 @@ end
 
 ########## Web dashboard using data in memory #############
 
-function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
+function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
     m_v = menu_var.value
     m_i = menu_iter.value
     m_m = menu_m.value
@@ -156,22 +156,28 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, a
 
     g = @lift(seasonal_g_data[$m_i][$m_m][$m_v][$m_s])
     y = @lift(seasonal_y_data[$m_i][$m_v][$m_s])
+    anomalies = @lift($g .- $y)
 
     min_p = @lift(minimum(vcat($g, $y)))
     max_p = @lift(maximum(vcat($g, $y)))
     limits_p = @lift(($min_p, $max_p))
 
+    min_ano = @lift(minimum($anomalies))
+    max_ano = @lift(maximum($anomalies))
+    limits_ano = @lift(($min_ano, $max_ano))
+
     p_g = heatmap!(ax_g, lons, lats, g, colorrange = limits_p)
     p_y = heatmap!(ax_y, lons, lats, y, colorrange = limits_p)
+p_ano = heatmap!(ax_anomalies, lons, lats, anomalies, colorrange = limits_ano)
 
     cl = @lift($m_v * " (W m^-2)")
     cb = Colorbar(fig[1, 3], colorrange = limits_p, label = cl, height = 300, tellheight = false)
 
+    cl_ano = @lift($m_v * " (W m^-2)")
+    cb_ano = Colorbar(fig[2, 3], colorrange = limits_ano, label = cl_ano, height = 300, tellheight = false)
+
     y_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_y_data[$m_i][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
     g_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_g_data[$m_i][$m_m][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
-
-    #    y_seasonal_means = @lift(mean.([seasonal_y_data[$m_i][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
-    #    g_seasonal_means = @lift(mean.([seasonal_g_data[$m_i][$m_m][$m_v][season] for season in ["winter", "spring", "summer", "fall"]]))
 
     min_sm = @lift(minimum(vcat($y_seasonal_means, $g_seasonal_means)))
     max_sm = @lift(maximum(vcat($y_seasonal_means, $g_seasonal_means)))
@@ -189,25 +195,33 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, a
     return fig
 end
 
-app = App() do
+app = App(; title="Explore Land Calibration v0.2") do
     fig = Figure(size = (1600, 900), fontsize = 14)
-    ax_y = GM.GeoAxis(
-                      fig[1, 1];
-                      dest = "+proj=wintri",
-                      title = "y (ERA5 obs)",
-                     )
-    lines!(ax_y, GM.coastlines())
-    ax_g = GM.GeoAxis(
-                      fig[1, 2];
-                      dest = "+proj=wintri",
-                      title = "g (ClimaLand output)",
-                     )
-    lines!(ax_g, GM.coastlines())
     menu_var = Dropdown(["lhf", "shf", "swu", "lwu"])
     menu_iter = Dropdown(1:n_iterations)
     menu_m = Dropdown(1:n_ensembles)
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
 
+    title_ym = @lift("$($(menu_season.value)) $($(menu_var.value)) iteration $($(menu_iter.value)) y (era5 obs)")
+    title_gm = @lift("$($(menu_season.value)) $($(menu_var.value)) iteration $($(menu_iter.value)), ensemble $($(menu_m.value)) g (ClimaLand)")
+    ax_y = GM.GeoAxis(
+                      fig[1, 1];
+                      dest = "+proj=wintri",
+                      title = title_ym,
+                     )
+    lines!(ax_y, GM.coastlines())
+    ax_g = GM.GeoAxis(
+                      fig[1, 2];
+                      dest = "+proj=wintri",
+                      title = title_gm,
+                     )
+    lines!(ax_g, GM.coastlines())
+        ax_anomalies = GM.GeoAxis(
+                      fig[2, 2];
+                      dest = "+proj=wintri",
+                      title = "g - y",
+                     )
+    lines!(ax_anomalies, GM.coastlines())
     ylabel_sm = @lift($(menu_var.value) * " (W m^-2)")
     ax_sm = Axis(fig[2, 1],
                  title= "Global mean by season",
@@ -217,7 +231,7 @@ app = App() do
     xlabel = "Season",
                  # xticklabel = ["winter", "spring", "summer", "fall"],
                 )
-    maps = update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
+    maps = update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
     params_current = @lift(param_dict[$(menu_iter.value)][$(menu_m.value)])
     params_initial = param_dict[1][1]
     params_relative = @lift($params_current ./ params_initial)
