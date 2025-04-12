@@ -9,8 +9,8 @@ using Printf
 ########### Load raw data ##################################
 
 # Load eki object, locations, prior
-eki = JLD2.load_object("eki_file.jld2")
-prior = include("priors.jl")
+eki = JLD2.load_object("ekifiles/eki_file_all_asnow_zenith.jld2")
+prior = include("ekifiles/priors_all_asnow_zenith.jl")
 @load "all_locations.jld2" locations
 
 ########### Get what we need in memory #####################
@@ -35,8 +35,7 @@ y_all = [EKP.get_obs(y_obs[i]) for i in 1:n_iterations]
 # Get all contrained parameters
 params = EKP.get_ϕ(prior, eki)
 param_dict = Dict(i => [params[i][:, j] for j in 1:size(params[i], 2)] for i in eachindex(params))
-
-# how to get the names?
+params_name = prior.name
 
 # to consider: Δ_t, rng, ... what else might be insightful?
 
@@ -164,23 +163,24 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, a
 
     min_ano = @lift(minimum($anomalies))
     max_ano = @lift(maximum($anomalies))
-    limits_ano = @lift(($min_ano, $max_ano))
+    # limits_ano = @lift(($min_ano, $max_ano))
+    limits_ano = (-30, 30)
 
     p_g = heatmap!(ax_g, lons, lats, g, colorrange = limits_p)
     p_y = heatmap!(ax_y, lons, lats, y, colorrange = limits_p)
-p_ano = heatmap!(ax_anomalies, lons, lats, anomalies, colorrange = limits_ano)
+    p_ano = heatmap!(ax_anomalies, lons, lats, anomalies, colorrange = limits_ano, colormap = cgrad(:Spectral, 3, categorical = true), highclip = :cyan, lowclip = :red)
 
     cl = @lift($m_v * " (W m^-2)")
     cb = Colorbar(fig[1, 3], colorrange = limits_p, label = cl, height = 300, tellheight = false)
 
     cl_ano = @lift($m_v * " (W m^-2)")
-    cb_ano = Colorbar(fig[2, 3], colorrange = limits_ano, label = cl_ano, height = 300, tellheight = false)
+    cb_ano = Colorbar(fig[2, 3], colorrange = limits_ano, label = cl_ano, height = 300, tellheight = false, colormap = cgrad(:Spectral, 3, categorical = true),highclip = :cyan, lowclip = :red)
 
     y_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_y_data[$m_i][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
     g_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_g_data[$m_i][$m_m][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
 
-    min_sm = @lift(minimum(vcat($y_seasonal_means, $g_seasonal_means)))
-    max_sm = @lift(maximum(vcat($y_seasonal_means, $g_seasonal_means)))
+    min_sm = 0 # @lift(minimum(vcat($y_seasonal_means, $g_seasonal_means)))
+    max_sm = @lift(maximum(vcat($y_seasonal_means, $g_seasonal_means)) + 10)
     limits_sm = @lift(($min_sm, $max_sm))
     lines_y = lines!(ax_sm, 1:4, y_seasonal_means, color= :green)
     lines_g = lines!(ax_sm, 1:4, g_seasonal_means, color= :black)
@@ -196,7 +196,7 @@ p_ano = heatmap!(ax_anomalies, lons, lats, anomalies, colorrange = limits_ano)
 end
 
 app = App(; title="Explore Land Calibration v0.2") do
-    fig = Figure(size = (1600, 900), fontsize = 14)
+    fig = Figure(size = (1600, 900), fontsize = 22)
     menu_var = Dropdown(["lhf", "shf", "swu", "lwu"])
     menu_iter = Dropdown(1:n_iterations)
     menu_m = Dropdown(1:n_ensembles)
@@ -235,17 +235,6 @@ app = App(; title="Explore Land Calibration v0.2") do
     params_current = @lift(param_dict[$(menu_iter.value)][$(menu_m.value)])
     params_initial = param_dict[1][1]
     params_relative = @lift($params_current ./ params_initial)
-    params_name = [
-                   "pc",
-                   "sc",
-                   "a",
-                   "K_sat_plant",
-                   "α_leaf_scaler",
-                   "τ_leaf_scaler",
-                   "α_soil_dry_scaler",
-                   "α_snow",
-                   "α_soil_scale",
-                  ]
     return DOM.div(
     style="display: flex; flex-direction: row; flex-wrap: wrap; gap: 20px; max-width: 1600px; margin: 0 auto 0 0;",
     # Left column
