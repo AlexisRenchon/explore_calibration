@@ -222,6 +222,10 @@ app = App(; title="Explore Land Calibration v0.2") do
     menu_m = Dropdown(1:n_ensembles)
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
 
+
+    rmse_all = @lift(RMSE(g_all[$(menu_iter.value)][:,1], y_all[$(menu_iter.value)]))
+    rmse_all_var = @lift(RMSE(g_data[$(menu_iter.value)][$(menu_m.value)][$(menu_var.value)], y_data[$(menu_iter.value)][$(menu_var.value)]))
+    rmse_clm = Dict("lhf" => 20, "shf" => 15, "swu" => 25, "lwu" => 10)
     year_x = @lift(2008+$(menu_iter.value))
     title_ym = @lift("$($(menu_season.value)) $($(menu_var.value)), iteration $($(menu_iter.value)), year $($(year_x)), Y (era5 obs)")
     title_gm = @lift("$($(menu_season.value)) $($(menu_var.value)), iteration $($(menu_iter.value)), ensemble $($(menu_m.value)), year $($(year_x)), G (ClimaLand)")
@@ -256,122 +260,195 @@ app = App(; title="Explore Land Calibration v0.2") do
     params_current = @lift(param_dict[$(menu_iter.value)][$(menu_m.value)])
     params_initial = param_dict[1][1]
     params_relative = @lift($params_current ./ params_initial)
-    return DOM.div(
-    style="display: flex; flex-direction: row; flex-wrap: wrap; gap: 20px; max-width: 1600px; margin: 0 auto 0 0;",
-    # Left column
-    DOM.div(
-        style="flex: 0 0 300px; display: flex; flex-direction: column; gap: 20px;",
-        Card(
-            title="Parameters",
-            DOM.div(
-                style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
-                DOM.div("Variable", menu_var),
-                DOM.div("Iteration", menu_iter),
-                DOM.div("Ensemble", menu_m),
-                DOM.div("Season", menu_season)
+        return DOM.div(
+        style="display: flex; flex-direction: row; flex-wrap: wrap; gap: 20px; max-width: 1600px; margin: 0 auto 0 0;",
+        # Left column
+        DOM.div(
+            style="flex: 0 0 300px; display: flex; flex-direction: column; gap: 20px;",
+            Card(
+                title="Parameters",
+                DOM.div(
+                    style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
+                    DOM.div("Variable", menu_var),
+                    DOM.div("Iteration", menu_iter),
+                    DOM.div("Ensemble", menu_m),
+                    DOM.div("Season", menu_season)
+                )
+            ),
+            Card(
+                title="Error Metrics",
+                DOM.div(
+                    style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
+                    @lift(begin
+                        current_iter = $(menu_iter.value)
+                        DOM.div(
+                            style="display: flex; flex-direction: column; gap: 5px;",
+                            DOM.div(
+                                style="display: grid; grid-template-columns: 0.8fr 1.1fr 1.1fr; border-bottom: 1px solid #999; padding-bottom: 5px; font-weight: bold;",
+                                DOM.span("Iteration"),
+                                DOM.span("Absolute"),
+                                DOM.span("Normalized (%)")
+                            ),
+                            [DOM.div(
+                                style=string(
+                                    "display: grid; grid-template-columns: 0.8fr 1.1fr 1.1fr; ",
+                                    "padding: 5px; border-bottom: 1px solid #eee; ",
+                                    i == current_iter ? "background-color: #f0f8ff; font-weight: bold;" : ""
+                                ),
+                                DOM.span("$(i)"),
+                                DOM.span(string(round(errors[i]/1e6, digits=2), " × 10⁶")),
+                                DOM.div(
+                                    style=string(
+                                        "display: flex; align-items: center; ",
+                                        "color: ", i > 1 && normalized_errors[i] < normalized_errors[i-1] ? "green" : "inherit"
+                                    ),
+                                    DOM.span(round(normalized_errors[i], digits=1)),
+                                    i > 1 ? DOM.span(
+                                        style=string(
+                                            "margin-left: 5px; font-size: 0.8em; ",
+                                            "color: ", normalized_errors[i] < normalized_errors[i-1] ? "green" : "red"
+                                        ),
+                                        normalized_errors[i] < normalized_errors[i-1] ? "↓" : "↑"
+                                    ) : DOM.span("")
+                                )
+                            ) for i in 1:length(errors)]
+                        )
+                    end)
+                )
             )
         ),
-        Card(
-            title="Error Metrics",
-            DOM.div(
-                style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
-                @lift(begin
-                    current_iter = $(menu_iter.value)
-                    DOM.div(
-                        style="display: flex; flex-direction: column; gap: 5px;",
+        # Middle column
+        DOM.div(
+            style="flex: 0 0 380px; display: flex; flex-direction: column; gap: 20px;",
+            Card(
+                title="Parameter Values",
+                DOM.div(
+                    style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
+                    @lift(begin
+                        param_values = $(params_current)
+                        relative_values = $(params_relative)
                         DOM.div(
-                            style="display: grid; grid-template-columns: 0.8fr 1.1fr 1.1fr; border-bottom: 1px solid #999; padding-bottom: 5px; font-weight: bold;",
-                            DOM.span("Iteration"),
-                            DOM.span("Absolute"),
-                            DOM.span("Normalized (%)")
-                        ),
-                        [DOM.div(
-                            style=string(
-                                "display: grid; grid-template-columns: 0.8fr 1.1fr 1.1fr; ",
-                                "padding: 5px; border-bottom: 1px solid #eee; ",
-                                i == current_iter ? "background-color: #f0f8ff; font-weight: bold;" : ""
-                            ),
-                            DOM.span("$(i)"),
-                            DOM.span(string(round(errors[i]/1e6, digits=2), " × 10⁶")),
+                            style="display: flex; flex-direction: column; gap: 5px;",
                             DOM.div(
-                                style=string(
-                                    "display: flex; align-items: center; ",
-                                    "color: ", i > 1 && normalized_errors[i] < normalized_errors[i-1] ? "green" : "inherit"
-                                ),
-                                DOM.span(round(normalized_errors[i], digits=1)),
-                                i > 1 ? DOM.span(
-                                    style=string(
-                                        "margin-left: 5px; font-size: 0.8em; ",
-                                        "color: ", normalized_errors[i] < normalized_errors[i-1] ? "green" : "red"
-                                    ),
-                                    normalized_errors[i] < normalized_errors[i-1] ? "↓" : "↑"
-                                ) : DOM.span("")
-                            )
-                        ) for i in 1:length(errors)]
-                    )
-                end)
-            )
-        )
-    ),
-    # Middle column
-    DOM.div(
-        style="flex: 0 0 380px; display: flex; flex-direction: column; gap: 20px;",
-        Card(
-            title="Parameter Values",
-            DOM.div(
-                style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
-                @lift(begin
-                    param_values = $(params_current)
-                    relative_values = $(params_relative)
-                    DOM.div(
-                        style="display: flex; flex-direction: column; gap: 5px;",
-                        DOM.div(
-                            style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; border-bottom: 1px solid #999; padding-bottom: 5px; font-weight: bold;",
-                            DOM.span("Parameter"),
-                            DOM.span("Value"),
-                            DOM.span("Relative")
-                        ),
-                        [DOM.div(
-                            style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; padding: 5px; border-bottom: 1px solid #eee;",
-                            DOM.span(style="font-weight: bold;", params_name[i]),
-                            DOM.span(
-                                # Format based on magnitude
-                                let val = param_values[i]
-                                    if abs(val) < 0.001 && val != 0
-                                        @sprintf("%.3e", val)  # Scientific for very small numbers
-                                    elseif abs(val) > 10000
-                                        @sprintf("%.3e", val)  # Scientific for very large numbers
-                                    else
-                                        @sprintf("%.4g", val)  # General format with 4 significant digits
-                                    end
-                                end
+                                style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; border-bottom: 1px solid #999; padding-bottom: 5px; font-weight: bold;",
+                                DOM.span("Parameter"),
+                                DOM.span("Value"),
+                                DOM.span("Relative")
                             ),
-                            DOM.div(
-                                style=string(
-                                    "display: flex; align-items: center; ",
-                                    "color: ", relative_values[i] > 1 ? "green" : (relative_values[i] < 1 ? "red" : "black")
-                                ),
-                                DOM.span(@sprintf("%.2f", relative_values[i])),  # Always 2 decimal places
+                            [DOM.div(
+                                style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; padding: 5px; border-bottom: 1px solid #eee;",
+                                DOM.span(style="font-weight: bold;", params_name[i]),
                                 DOM.span(
-                                    style="margin-left: 5px; font-size: 0.8em;",
-                                    relative_values[i] > 1 ? "↑" : (relative_values[i] < 1 ? "↓" : "")
+                                    # Format based on magnitude
+                                    let val = param_values[i]
+                                        if abs(val) < 0.001 && val != 0
+                                            @sprintf("%.3e", val)  # Scientific for very small numbers
+                                        elseif abs(val) > 10000
+                                            @sprintf("%.3e", val)  # Scientific for very large numbers
+                                        else
+                                            @sprintf("%.4g", val)  # General format with 4 significant digits
+                                        end
+                                    end
+                                ),
+                                DOM.div(
+                                    style=string(
+                                        "display: flex; align-items: center; ",
+                                        "color: ", relative_values[i] > 1 ? "green" : (relative_values[i] < 1 ? "red" : "black")
+                                    ),
+                                    DOM.span(@sprintf("%.2f", relative_values[i])),  # Always 2 decimal places
+                                    DOM.span(
+                                        style="margin-left: 5px; font-size: 0.8em;",
+                                        relative_values[i] > 1 ? "↑" : (relative_values[i] < 1 ? "↓" : "")
+                                    )
                                 )
-                            )
-                        ) for i in 1:length(params_name)]
-                    )
-                end)
+                            ) for i in 1:length(params_name)]
+                        )
+                    end)
+                )
+            ),
+            Card(
+                title="RMSE Metrics",
+                DOM.div(
+                    style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
+                    @lift(begin
+                        current_iter = $(menu_iter.value)
+                        current_var = $(menu_var.value)
+                        current_m = $(menu_m.value)
+                        rmse_clm_value = rmse_clm[current_var]
+
+                        DOM.div(
+                            style="display: flex; flex-direction: column; gap: 15px;",
+                            # Section headers
+                            DOM.div(
+                                style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;",
+                                DOM.h4(style="margin: 0; color: #333; grid-column: 1;", "Overall RMSE"),
+                                DOM.h4(style="margin: 0; color: #333; grid-column: 2;", "$(current_var) RMSE (CLM: $(rmse_clm_value) W m⁻²)")
+                            ),
+                            # Table headers
+                            DOM.div(
+                                style="display: grid; grid-template-columns: 0.4fr 0.6fr 0.4fr 0.6fr; gap: 15px; border-bottom: 1px solid #999; padding-bottom: 5px; font-weight: bold;",
+                                DOM.span("Iter."),
+                                DOM.span("RMSE (W m⁻²)"),
+                                DOM.span("Iter."),
+                                DOM.span("RMSE (W m⁻²)")
+                            ),
+                            # Table rows
+                            [DOM.div(
+                                style="display: grid; grid-template-columns: 0.4fr 0.6fr 0.4fr 0.6fr; gap: 15px; padding: 5px; border-bottom: 1px solid #eee;",
+                                # Overall RMSE column
+                                DOM.span(
+                                    style=i == current_iter ? "font-weight: bold;" : "",
+                                    "$(i)"
+                                ),
+                                DOM.div(
+                                    style=string(
+                                        "display: flex; align-items: center; ",
+                                        i == current_iter ? "font-weight: bold;" : "",
+                                        "color: ", i > 1 && RMSE(g_all[i][:,1], y_all[i]) < RMSE(g_all[i-1][:,1], y_all[i-1]) ? "green" : "inherit"
+                                    ),
+                                    DOM.span(@sprintf("%.3f", RMSE(g_all[i][:,1], y_all[i]))),
+                                    i > 1 ? DOM.span(
+                                        style=string(
+                                            "margin-left: 5px; font-size: 0.8em; ",
+                                            "color: ", RMSE(g_all[i][:,1], y_all[i]) < RMSE(g_all[i-1][:,1], y_all[i-1]) ? "green" : "red"
+                                        ),
+                                        RMSE(g_all[i][:,1], y_all[i]) < RMSE(g_all[i-1][:,1], y_all[i-1]) ? "↓" : "↑"
+                                    ) : DOM.span("")
+                                ),
+                                # Variable RMSE column
+                                DOM.span(
+                                    style=i == current_iter ? "font-weight: bold;" : "",
+                                    "$(i)"
+                                ),
+                                DOM.div(
+                                    style=string(
+                                        "display: flex; align-items: center; ",
+                                        i == current_iter ? "font-weight: bold;" : "",
+                                        "color: ", RMSE(g_data[i][current_m][current_var], y_data[i][current_var]) < rmse_clm_value ? "green" : "red"
+                                    ),
+                                    DOM.span(@sprintf("%.3f", RMSE(g_data[i][current_m][current_var], y_data[i][current_var]))),
+                                    DOM.span(
+                                        style="margin-left: 5px; font-size: 0.8em;",
+                                        i > 1 && RMSE(g_data[i][current_m][current_var], y_data[i][current_var]) <
+                                        RMSE(g_data[i-1][current_m][current_var], y_data[i-1][current_var]) ? "↓" :
+                                        (i > 1 ? "↑" : "")
+                                    )
+                                )
+                            ) for i in 1:n_iterations]
+                        )
+                    end)
+                )
             )
-        )
-    ),
-    # Right column (maps)
-    DOM.div(
-        style="flex: 1; min-width: 800px;",
-        Card(
-            title="Map Visualization",
-            maps
+        ),
+        # Right column (maps)
+        DOM.div(
+            style="flex: 1; min-width: 800px;",
+            Card(
+                title="Map Visualization",
+                maps
+            )
         )
     )
-)
 end
 # http://localhost:9384/browser-display
 
