@@ -13,7 +13,84 @@ eki = JLD2.load_object("ekifiles/eki_file_all_asnow_zenith.jld2")
 prior = include("ekifiles/priors_all_asnow_zenith.jl")
 @load "all_locations.jld2" locations
 
+########## Some useful functions ###########################
+
+function RMSE(x, z)
+    return sqrt(mean((x.-z).^2))
+end
+
+function error_abs(x, z)
+    return mean(abs.(x.-z))
+end
+
+# TODO: change function below so it works with length(n) = 1, 2, 3...
+# probably just replace the 4 with length(n)
+"""
+    n: 1=lhf, 2=shf, 3=swu, 4=lwu
+"""
+function slicevar(v, n)
+    idx = vcat([(i+(n-1)*4:i+(n-1)*4+3) for i in 1:16:length(v)]...)
+    return v[idx]
+end
+
+function add_seasonal_access(data_dict)
+    result = Dict{Any, Any}()
+
+    for (site_id, site_data) in data_dict
+        result[site_id] = Dict{String, Any}()
+
+        for (var_key, values) in site_data
+            # Create a new dictionary for each variable with seasonal slices
+            result[site_id][var_key] = Dict{String, Vector{Float64}}(
+                "winter" => values[1:4:end],
+                "spring" => values[2:4:end],
+                "summer" => values[3:4:end],
+                "fall" => values[4:4:end]
+            )
+        end
+    end
+
+    return result
+end
+
+function add_seasonal_access_g(data_dict)
+    result = Dict{Any, Any}()
+
+    for (outer_key, outer_val) in data_dict
+        result[outer_key] = Dict{Any, Any}()
+
+        for (middle_key, middle_val) in outer_val
+            result[outer_key][middle_key] = Dict{String, Any}()
+
+            for (var_key, values) in middle_val
+                # Create seasonal slices for each variable
+                result[outer_key][middle_key][var_key] = Dict{String, Vector{Float64}}(
+                    "winter" => values[1:4:end],
+                    "spring" => values[2:4:end],
+                    "summer" => values[3:4:end],
+                    "fall" => values[4:4:end]
+                )
+            end
+        end
+    end
+
+    return result
+end
+
+# Calculate mean lat weight averaged
+function cosine_weighted_global_mean(values::Vector{Float64}, lats::Vector{Float64})
+    @assert length(values) == length(lats) "Length mismatch between values and latitudes"
+
+    weights = cosd.(lats)  # cosd for degrees
+    numerator = sum(values .* weights)
+    denominator = sum(weights)
+
+    return numerator / denominator
+end
+
 ########### Get what we need in memory #####################
+
+# TODO: put all that below in a function and call in inside App()
 
 # Get n_ensembles, n_iterations, errors
 n_ensembles = EKP.get_N_ens(eki)
@@ -40,13 +117,6 @@ params_name = prior.name
 # to consider: Δ_t, rng, ... what else might be insightful?
 
 ########## Process data for plotting ######################
-"""
-    n: 1=lhf, 2=shf, 3=swu, 4=lwu
-"""
-function slicevar(v, n)
-    idx = vcat([(i+(n-1)*4:i+(n-1)*4+3) for i in 1:16:length(v)]...)
-    return v[idx]
-end
 
 y_data = Dict()
 g_data = Dict()
@@ -76,52 +146,8 @@ for iteration_n in 1:length(g_all)
     end
 end
 
-function add_seasonal_access(data_dict)
-    result = Dict{Any, Any}()
-
-    for (site_id, site_data) in data_dict
-        result[site_id] = Dict{String, Any}()
-
-        for (var_key, values) in site_data
-            # Create a new dictionary for each variable with seasonal slices
-            result[site_id][var_key] = Dict{String, Vector{Float64}}(
-                "winter" => values[1:4:end],
-                "spring" => values[2:4:end],
-                "summer" => values[3:4:end],
-                "fall" => values[4:4:end]
-            )
-        end
-    end
-
-    return result
-end
-
 # Create new structure with seasonal access
 seasonal_y_data = add_seasonal_access(y_data)
-
-function add_seasonal_access_g(data_dict)
-    result = Dict{Any, Any}()
-
-    for (outer_key, outer_val) in data_dict
-        result[outer_key] = Dict{Any, Any}()
-
-        for (middle_key, middle_val) in outer_val
-            result[outer_key][middle_key] = Dict{String, Any}()
-
-            for (var_key, values) in middle_val
-                # Create seasonal slices for each variable
-                result[outer_key][middle_key][var_key] = Dict{String, Vector{Float64}}(
-                    "winter" => values[1:4:end],
-                    "spring" => values[2:4:end],
-                    "summer" => values[3:4:end],
-                    "fall" => values[4:4:end]
-                )
-            end
-        end
-    end
-
-    return result
-end
 
 # Create new structure with seasonal access
 seasonal_g_data = add_seasonal_access_g(g_data)
@@ -131,19 +157,6 @@ seasonal_g_data = add_seasonal_access_g(g_data)
 
 lons = map(x -> x[1], locations)
 lats = map(x -> x[2], locations)
-
-# Calculate mean lat weight averaged
-function cosine_weighted_global_mean(values::Vector{Float64}, lats::Vector{Float64})
-    @assert length(values) == length(lats) "Length mismatch between values and latitudes"
-
-    weights = cosd.(lats)  # cosd for degrees
-    numerator = sum(values .* weights)
-    denominator = sum(weights)
-
-    return numerator / denominator
-end
-
-
 
 ########## Web dashboard using data in memory #############
 
@@ -156,6 +169,7 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, a
     g = @lift(seasonal_g_data[$m_i][$m_m][$m_v][$m_s])
     y = @lift(seasonal_y_data[$m_i][$m_v][$m_s])
     anomalies = @lift($g .- $y)
+    rmse_y_g = @lift(string("RMSE = ", round(RMSE($g, $y), digits=1), " W m⁻²"))
 
     min_p = @lift(minimum(vcat($g, $y)))
     max_p = @lift(maximum(vcat($g, $y)))
@@ -170,20 +184,26 @@ function update_fig(menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, a
     p_y = heatmap!(ax_y, lons, lats, y, colorrange = limits_p)
     p_ano = heatmap!(ax_anomalies, lons, lats, anomalies, colorrange = limits_ano, colormap = cgrad(:Spectral, 3, categorical = true), highclip = :cyan, lowclip = :red)
 
-    cl = @lift($m_v * " (W m^-2)")
+    cl = @lift($m_v * " (W m⁻²)")
     cb = Colorbar(fig[1, 3], colorrange = limits_p, label = cl, height = 300, tellheight = false)
 
-    cl_ano = @lift($m_v * " (W m^-2)")
+    cl_ano = @lift($m_v * " (W m⁻²)")
     cb_ano = Colorbar(fig[2, 3], colorrange = limits_ano, label = cl_ano, height = 300, tellheight = false, colormap = cgrad(:Spectral, 3, categorical = true),highclip = :cyan, lowclip = :red)
 
     y_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_y_data[$m_i][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
+    y_seasonal_means_1 = @lift([cosine_weighted_global_mean(seasonal_y_data[1][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
+
     g_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_g_data[$m_i][$m_m][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
+     g_seasonal_means_1 = @lift([cosine_weighted_global_mean(seasonal_g_data[1][1][$m_v][season], lats) for season in ["winter", "spring", "summer", "fall"]])
 
     min_sm = 0 # @lift(minimum(vcat($y_seasonal_means, $g_seasonal_means)))
     max_sm = @lift(maximum(vcat($y_seasonal_means, $g_seasonal_means)) + 10)
     limits_sm = @lift(($min_sm, $max_sm))
-    lines_y = lines!(ax_sm, 1:4, y_seasonal_means, color= :green)
+    line_y_1 = lines!(ax_sm, 1:4, y_seasonal_means_1, color= (:green, 0.3), linestyle = :dash)
+    lines_g_1 = lines!(ax_sm, 1:4, g_seasonal_means_1, color= (:black, 0.3), linestyle = :dash)
     lines_g = lines!(ax_sm, 1:4, g_seasonal_means, color= :black)
+    lines_y = lines!(ax_sm, 1:4, y_seasonal_means, color= :green)
+    text!(ax_sm, 0.1, 0.1, text = rmse_y_g, align = (:left, :top), space = :relative)
 
     seasons = ["winter", "spring", "summer", "fall"]
     current_s = @lift(findfirst(==($m_s), seasons))
@@ -202,8 +222,9 @@ app = App(; title="Explore Land Calibration v0.2") do
     menu_m = Dropdown(1:n_ensembles)
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
 
-    title_ym = @lift("$($(menu_season.value)) $($(menu_var.value)) iteration $($(menu_iter.value)) y (era5 obs)")
-    title_gm = @lift("$($(menu_season.value)) $($(menu_var.value)) iteration $($(menu_iter.value)), ensemble $($(menu_m.value)) g (ClimaLand)")
+    year_x = @lift(2008+$(menu_iter.value))
+    title_ym = @lift("$($(menu_season.value)) $($(menu_var.value)), iteration $($(menu_iter.value)), year $($(year_x)), Y (era5 obs)")
+    title_gm = @lift("$($(menu_season.value)) $($(menu_var.value)), iteration $($(menu_iter.value)), ensemble $($(menu_m.value)), year $($(year_x)), G (ClimaLand)")
     ax_y = GM.GeoAxis(
                       fig[1, 1];
                       dest = "+proj=wintri",
@@ -222,7 +243,7 @@ app = App(; title="Explore Land Calibration v0.2") do
                       title = "g - y",
                      )
     lines!(ax_anomalies, GM.coastlines())
-    ylabel_sm = @lift($(menu_var.value) * " (W m^-2)")
+    ylabel_sm = @lift($(menu_var.value) * " (W m⁻²)")
     ax_sm = Axis(fig[2, 1],
                  title= "Global mean by season",
                  limits=(0.99, 4.01, 0, 400),
@@ -364,4 +385,3 @@ end
 # this is scalable, expandable and generalizable, dashboard made from eki and served, could be automated in CI
 # not esthetic right now, but can be as pretty as Manuscript figures (just not a prio)
 # the dashboard allows access to 4 (variables) * 4 (plots) * 8 (iterations) * 19 (ensemble) *  4 (seasons) = 10,000 plots...
-
