@@ -1,3 +1,12 @@
+# TODO:
+# Currently, on load_button.value action does not work and it thus commented out.
+# To vizualise another file, change the index of menu_calibration manually before running the script
+# (possibly could make it a global variable here:)
+# global index = 1
+# to make it very easy
+# Note, fixing this might be a bit tricky - not sure if we can change Dropdown after starting an App.
+# a possible solution would be that the button re-generate the entire App().
+
 import EnsembleKalmanProcesses as EKP
 import GeoMakie as GM
 using WGLMakie
@@ -98,12 +107,13 @@ function cosine_weighted_global_mean(values::Vector{Float64}, lats::Vector{Float
 end
 
 # Function to load data and process it
-function load_and_process_data(eki_file, prior_file, locations_file="all_locations.jld2")
+function load_and_process_data(eki_file, prior_file, variable_file, locations_file="all_locations.jld2")
     println("Loading: EKI=$(eki_file), Prior=$(prior_file)")
 
     # Load eki object, locations, prior
     eki = JLD2.load_object(eki_file)
     prior = include(prior_file)
+    variable_list = include(variable_file)
     @load locations_file locations
 
     # Get basic information
@@ -127,7 +137,6 @@ function load_and_process_data(eki_file, prior_file, locations_file="all_locatio
 
     # Get variable list - extract from the prior or config if available
     # This is a bit of an assumption - adjust based on how your prior stores variable names
-    variable_list = ["lhf", "shf", "swu", "lwu"]
     n_vars = length(variable_list)
 
     # Process y_data
@@ -208,50 +217,13 @@ function load_and_process_data(eki_file, prior_file, locations_file="all_locatio
                )
 end
 
-function update_fig(load_button, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
+function update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, seasonal_g_data, seasonal_y_data, lons, lats)
 
-
-    # Handle load button click with proper Observable handling
-    on(load_button.value) do _
-        # Ensure a calibration set is selected
-        cal_set = menu_calibration.value
-        #        if cal_set == "" || !haskey(calibration_sets, cal_set)
-        #            println("No valid calibration set selected")
-        #            return
-        #        end
-
-        # Get file paths for the selected calibration set using @lift
-        selected_set = @lift(calibration_sets[$(cal_set)])
-        eki_file = @lift($(selected_set)["eki"])
-        prior_file = @lift($(selected_set)["prior"])
-
-        #println("Loading: EKI=$(eki_file[]), Prior=$(prior_file[])")
-
-        # Load and process data
-        loaded_data = @lift(load_and_process_data($eki_file, $prior_file))
-
-        variable_list = ["lhf", "shf", "swu", "lwu"]  # Default
-        menu_var = Dropdown(variable_list)
-        menu_iter = Dropdown(1:loaded_data[]["n_iterations"])
-        menu_m = Dropdown(1:loaded_data[]["n_ensembles"])
-        menu_season = Dropdown(["winter", "spring", "summer", "fall"])
-        # Update state
-
-        m_v = menu_var.value
-        m_i = menu_iter.value
-        m_m = menu_m.value
-        m_s = menu_season.value
-        year_x = @lift(2008 + $(menu_iter.value))
-        new_title = @lift("$($m_s) $($m_v), iteration $($m_i), ensemble $($m_m), year $(year_x[])")
-
-        title_label = Label(fig[0, :], new_title, fontsize=30, tellwidth = false, padding = (900, 0, 0, 0))
-    end
-
-    # Use @lift to properly handle observables
-        m_v = menu_var.value
-        m_i = menu_iter.value
-        m_m = menu_m.value
-        m_s = menu_season.value
+        # Use @lift to properly handle observables
+    m_v = menu_var.value
+    m_i = menu_iter.value
+    m_m = menu_m.value
+    m_s = menu_season.value
 
     g = @lift(seasonal_g_data[$m_i][$m_m][$m_v][$m_s])
     y = @lift(seasonal_y_data[$m_i][$m_v][$m_s])
@@ -303,7 +275,6 @@ function update_fig(load_button, menu_var, menu_iter, menu_m, menu_season, fig, 
     return fig
 end
 
-# Get list of available calibration sets
 function get_calibration_sets(directory="ekifiles")
     # List all files in the directory
     all_files = readdir(directory)
@@ -320,12 +291,18 @@ function get_calibration_sets(directory="ekifiles")
 
         # Check if corresponding prior file exists
         prior_file = "priors_$(base_name).jl"
-        if prior_file in all_files
-            # Store the paths to both files
+
+        # Check if corresponding variable list file exists
+        var_file = "variables_$(base_name).jl"
+
+        # Only add to calibration sets if both required files exist
+        if prior_file in all_files && var_file in all_files
+            # Store the paths to all three files
             calibration_sets[base_name] = Dict(
-                                               "eki" => joinpath(directory, eki_file),
-                                               "prior" => joinpath(directory, prior_file)
-                                              )
+                "eki" => joinpath(directory, eki_file),
+                "prior" => joinpath(directory, prior_file),
+                "variable_list" => joinpath(directory, var_file)
+            )
         end
     end
 
@@ -338,7 +315,7 @@ app = App(title="CliCal v0.2.0") do
     calibration_names = sort(collect(keys(calibration_sets)))
 
     # Create a single menu for selecting calibration sets
-    menu_calibration = Dropdown(calibration_names, placeholder="Select calibration set")
+    menu_calibration = Dropdown(calibration_names; index = 3) # only swu file. works!
 
     # Button to load data
     load_button = Button("Load Data")
@@ -376,25 +353,63 @@ app = App(title="CliCal v0.2.0") do
                  xlabel = "Season",
                 )
 
-
     cal_set = menu_calibration.value
 
     # Get file paths for the selected calibration set using @lift
     selected_set = @lift(calibration_sets[$(cal_set)])
     eki_file = @lift($(selected_set)["eki"])
     prior_file = @lift($(selected_set)["prior"])
+    variable_file = @lift($(selected_set)["variable_list"])
 
     # Load and process data
-    loaded_data = load_and_process_data(eki_file[], prior_file[])
+    loaded_data = load_and_process_data(eki_file[], prior_file[], variable_file[])
 
-    variable_list = ["lhf", "shf", "swu", "lwu"]  # Default
+    variable_list = loaded_data["variable_list"]  # Default
     menu_var = Dropdown(variable_list)
     menu_iter = Dropdown(1:loaded_data["n_iterations"])
     menu_m = Dropdown(1:loaded_data["n_ensembles"])
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
 
+    year_x = @lift(2008+$(menu_iter.value))
+    title_fig = @lift("$($(menu_season.value)) $($(menu_var.value)), iteration $($(menu_iter.value)), ensemble $($(menu_m.value)), year $($(year_x))")
+    Label(fig[0, :], title_fig, fontsize=30, tellwidth = false)
+
+    # Handle load button click with proper Observable handling
+#    on(load_button.value) do _
+#        # Ensure a calibration set is selected
+#        cal_set = menu_calibration.value
+#        #        if cal_set == "" || !haskey(calibration_sets, cal_set)
+#        #            println("No valid calibration set selected")
+#        #            return
+#        #        end
+#
+#        # Get file paths for the selected calibration set using @lift
+#        selected_set = @lift(calibration_sets[$(cal_set)])
+#        eki_file = @lift($(selected_set)["eki"])
+#        prior_file = @lift($(selected_set)["prior"])
+#        variable_file = @lift($(selected_set)["variable_list"])
+#
+#        # Load and process data
+#        loaded_data = load_and_process_data(eki_file[], prior_file[], variable_file[])
+#
+#        #println("Loading: EKI=$(eki_file[]), Prior=$(prior_file[])")
+#
+#        # Load and process data
+#        variable_list = loaded_data["variable_list"]  # Default
+#        menu_var = Dropdown(variable_list)
+#        menu_iter = Dropdown(1:loaded_data["n_iterations"])
+#        menu_m = Dropdown(1:loaded_data["n_ensembles"])
+#
+#        menu_season = Dropdown(["winter", "spring", "summer", "fall"])
+#
+#        year_x = @lift(2008+$(menu_iter.value))
+#        title_fig = @lift("$($(menu_season.value)) $($(menu_var.value)), iteration $($(menu_iter.value)), ensemble $($(menu_m.value)), year $($(year_x))")
+#        Label(fig[0, :], title_fig, fontsize=30, tellwidth = false)
+#        maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data["seasonal_g_data"], loaded_data["seasonal_y_data"], loaded_data["lons"], loaded_data["lats"])
+#    end
+
     # Update display
-    maps = update_fig(load_button, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data["seasonal_g_data"], loaded_data["seasonal_y_data"], loaded_data["lons"], loaded_data["lats"])
+    maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data["seasonal_g_data"], loaded_data["seasonal_y_data"], loaded_data["lons"], loaded_data["lats"])
 
     # Return the main layout
     return DOM.div(
