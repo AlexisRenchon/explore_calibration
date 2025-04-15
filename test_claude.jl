@@ -1,11 +1,5 @@
 # TODO:
-# Currently, on load_button.value action does not work and it thus commented out.
-# To vizualise another file, change the index of menu_calibration manually before running the script
-# (possibly could make it a global variable here:)
-# global index = 1
-# to make it very easy
-# Note, fixing this might be a bit tricky - not sure if we can change Dropdown after starting an App.
-# a possible solution would be that the button re-generate the entire App().
+# Currently, on load_button.value is a bit bugged (sometime works, sometimes not).
 
 import EnsembleKalmanProcesses as EKP
 import GeoMakie as GM
@@ -113,7 +107,7 @@ function load_and_process_data(eki_file, prior_file, variable_file, locations_fi
     # Load eki object, locations, prior
     eki = JLD2.load_object(eki_file)
     prior = include(prior_file)
-    variable_list = include(variable_file)
+    variable_list_file = include(variable_file)
     @load locations_file locations
 
     # Get basic information
@@ -315,7 +309,7 @@ app = App(title="CliCal v0.2.0") do
     calibration_names = sort(collect(keys(calibration_sets)))
 
     # Create a single menu for selecting calibration sets
-    menu_calibration = Dropdown(calibration_names; index = 3) # only swu file. works!
+    menu_calibration = Dropdown(calibration_names; index = 1) # only swu file. works!
 
     # Button to load data
     load_button = Button("Load Data")
@@ -362,12 +356,12 @@ app = App(title="CliCal v0.2.0") do
     variable_file = @lift($(selected_set)["variable_list"])
 
     # Load and process data
-    loaded_data = load_and_process_data(eki_file[], prior_file[], variable_file[])
+    loaded_data = Observable(load_and_process_data(eki_file[], prior_file[], variable_file[]))
 
-    variable_list = loaded_data["variable_list"]  # Default
-    menu_var = Dropdown(variable_list)
-    menu_iter = Dropdown(1:loaded_data["n_iterations"])
-    menu_m = Dropdown(1:loaded_data["n_ensembles"])
+    variable_list_vec = @lift($loaded_data["variable_list"])  # Default
+    menu_var = Dropdown(variable_list_vec[])
+    menu_iter = Dropdown(1:loaded_data[]["n_iterations"])
+    menu_m = Dropdown(1:loaded_data[]["n_ensembles"])
     menu_season = Dropdown(["winter", "spring", "summer", "fall"])
 
     year_x = @lift(2008+$(menu_iter.value))
@@ -375,41 +369,38 @@ app = App(title="CliCal v0.2.0") do
     Label(fig[0, :], title_fig, fontsize=30, tellwidth = false)
 
     # Handle load button click with proper Observable handling
-#    on(load_button.value) do _
-#        # Ensure a calibration set is selected
-#        cal_set = menu_calibration.value
-#        #        if cal_set == "" || !haskey(calibration_sets, cal_set)
-#        #            println("No valid calibration set selected")
-#        #            return
-#        #        end
+    on(load_button.value) do _
+
+        # Get file paths for the selected calibration set without using @lift
+        # to test - dev
+        # menu_calibration.value[] = "swu_asnow_zenith"
+
+        selected_set[] = calibration_sets[menu_calibration.value[]]
+        eki_file[] = selected_set[]["eki"]
+        prior_file[] = selected_set[]["prior"]
+        variable_file[] = selected_set[]["variable_list"]
+
+        # Load and process data
+        loaded_data[] = load_and_process_data(eki_file[], prior_file[], variable_file[])
+
+        # Update menus with new options
+        variable_list_vec[] = loaded_data[]["variable_list"]
+        menu_var.options[] = variable_list_vec[]
+        menu_iter.options[] = 1:loaded_data[]["n_iterations"]
+        menu_m.options[] = 1:loaded_data[]["n_ensembles"]
+
+        # Important: Reset the values to the first item in each list to avoid KeyError
+        menu_var.value[] = variable_list_vec[][1]    # Select first variable
+        menu_iter.value[] = 1                  # Select first iteration
+        menu_m.value[] = 1                     # Select first ensemble
+    end
 #
-#        # Get file paths for the selected calibration set using @lift
-#        selected_set = @lift(calibration_sets[$(cal_set)])
-#        eki_file = @lift($(selected_set)["eki"])
-#        prior_file = @lift($(selected_set)["prior"])
-#        variable_file = @lift($(selected_set)["variable_list"])
-#
-#        # Load and process data
-#        loaded_data = load_and_process_data(eki_file[], prior_file[], variable_file[])
-#
-#        #println("Loading: EKI=$(eki_file[]), Prior=$(prior_file[])")
-#
-#        # Load and process data
-#        variable_list = loaded_data["variable_list"]  # Default
-#        menu_var = Dropdown(variable_list)
-#        menu_iter = Dropdown(1:loaded_data["n_iterations"])
-#        menu_m = Dropdown(1:loaded_data["n_ensembles"])
-#
-#        menu_season = Dropdown(["winter", "spring", "summer", "fall"])
-#
-#        year_x = @lift(2008+$(menu_iter.value))
-#        title_fig = @lift("$($(menu_season.value)) $($(menu_var.value)), iteration $($(menu_iter.value)), ensemble $($(menu_m.value)), year $($(year_x))")
-#        Label(fig[0, :], title_fig, fontsize=30, tellwidth = false)
-#        maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data["seasonal_g_data"], loaded_data["seasonal_y_data"], loaded_data["lons"], loaded_data["lats"])
+#        # Update the figure with the new data
+#        maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["lons"], loaded_data[]["lats"])
 #    end
 
     # Update display
-    maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data["seasonal_g_data"], loaded_data["seasonal_y_data"], loaded_data["lons"], loaded_data["lats"])
+    maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["lons"], loaded_data[]["lats"])
 
     # Return the main layout
     return DOM.div(
@@ -441,12 +432,12 @@ app = App(title="CliCal v0.2.0") do
                                 DOM.div(
                                         style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
                                         @lift(begin
-                                                  if !haskey(loaded_data, "errors")
+                                                  if !haskey($loaded_data, "errors")
                                                       return DOM.div("Load data to see error metrics")
                                                   end
 
-                                                  errors = loaded_data["errors"]
-                                                  normalized_errors = loaded_data["normalized_errors"]
+                                                  errors = $loaded_data["errors"]
+                                                  normalized_errors = $loaded_data["normalized_errors"]
                                                   current_iter = $(menu_iter.value)
 
                                                   if current_iter == 0
@@ -498,12 +489,12 @@ app = App(title="CliCal v0.2.0") do
                                 DOM.div(
                                         style="display: flex; flex-direction: column; gap: 10px; padding: 10px;",
                                         @lift(begin
-                                                  if !haskey(loaded_data, "param_dict")
+                                                  if !haskey($loaded_data, "param_dict")
                                                       return DOM.div("Load data to see parameter values")
                                                   end
 
-                                                  param_dict = loaded_data["param_dict"]
-                                                  params_name = loaded_data["params_name"]
+                                                  param_dict = $loaded_data["param_dict"]
+                                                  params_name = $loaded_data["params_name"]
 
                                                   current_iter = $(menu_iter.value)
                                                   current_m = $(menu_m.value)
@@ -565,15 +556,15 @@ app = App(title="CliCal v0.2.0") do
                                 DOM.div(
                                         style="display: flex; flex-direction: column; gap: 15px; padding: 10px;",
                                         @lift(begin
-                                                  if !haskey(loaded_data, "g_all")
+                                                  if !haskey($loaded_data, "g_all")
                                                       return DOM.div("Load data to see RMSE metrics")
                                                   end
 
-                                                  g_all = loaded_data["g_all"]
-                                                  y_all = loaded_data["y_all"]
-                                                  g_data = loaded_data["g_data"]
-                                                  y_data = loaded_data["y_data"]
-                                                  rmse_benchmarks = loaded_data["rmse_benchmarks"]
+                                                  g_all = $loaded_data["g_all"]
+                                                  y_all = $loaded_data["y_all"]
+                                                  g_data = $loaded_data["g_data"]
+                                                  y_data = $loaded_data["y_data"]
+                                                  rmse_benchmarks = $loaded_data["rmse_benchmarks"]
 
                                                   current_iter = $(menu_iter.value)
                                                   current_var = $(menu_var.value)
