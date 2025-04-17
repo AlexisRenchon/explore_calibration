@@ -1,5 +1,6 @@
 # TODO:
 # Currently, on load_button.value is a bit bugged (sometime works, sometimes not).
+# works most of the time though. especially if all menu to 1st value.
 
 import EnsembleKalmanProcesses as EKP
 import GeoMakie as GM
@@ -8,6 +9,7 @@ using Bonito
 using JLD2
 using Statistics
 using Printf
+import Observables as OBS
 
 ########### Some useful functions ###########################
 
@@ -370,34 +372,35 @@ app = App(title="CliCal v0.2.0") do
 
     # Handle load button click with proper Observable handling
     on(load_button.value) do _
+            # Get file paths for the selected calibration set without using @lift
+            # to test - dev
+            # menu_calibration.value[] = "swu_asnow_zenith"
 
-        # Get file paths for the selected calibration set without using @lift
-        # to test - dev
-        # menu_calibration.value[] = "swu_asnow_zenith"
+            selected_set[] = calibration_sets[menu_calibration.value[]]
+            eki_file[] = selected_set[]["eki"]
+            prior_file[] = selected_set[]["prior"]
+            variable_file[] = selected_set[]["variable_list"]
 
-        selected_set[] = calibration_sets[menu_calibration.value[]]
-        eki_file[] = selected_set[]["eki"]
-        prior_file[] = selected_set[]["prior"]
-        variable_file[] = selected_set[]["variable_list"]
+            # Load and process data
+            loaded_data.val = load_and_process_data(eki_file[], prior_file[], variable_file[])
 
-        # Load and process data
-        loaded_data[] = load_and_process_data(eki_file[], prior_file[], variable_file[])
+            # Update menus with new options
+            variable_list_vec.val = loaded_data[]["variable_list"]
+            menu_var.options.val = variable_list_vec[]
+            menu_iter.options.val = 1:loaded_data[]["n_iterations"]
+            menu_m.options.val = 1:loaded_data[]["n_ensembles"]
 
-        # Update menus with new options
-        variable_list_vec[] = loaded_data[]["variable_list"]
-        menu_var.options[] = variable_list_vec[]
-        menu_iter.options[] = 1:loaded_data[]["n_iterations"]
-        menu_m.options[] = 1:loaded_data[]["n_ensembles"]
+            # Important: Reset the values to the first item in each list to avoid KeyError
+            menu_var.value[] = variable_list_vec[][1]    # Select first variable
+            menu_iter.value[] = 1                  # Select first iteration
+            menu_m.value[] = 1                     # Select first ensemble
 
-        # Important: Reset the values to the first item in each list to avoid KeyError
-        menu_var.value[] = variable_list_vec[][1]    # Select first variable
-        menu_iter.value[] = 1                  # Select first iteration
-        menu_m.value[] = 1                     # Select first ensemble
+            # now we can update safely
+            variable_list_vec[] = loaded_data[]["variable_list"]
+            menu_var.options[] = variable_list_vec[]
+            menu_iter.options[] = 1:loaded_data[]["n_iterations"]
+            menu_m.options[] = 1:loaded_data[]["n_ensembles"]
     end
-#
-#        # Update the figure with the new data
-#        maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["lons"], loaded_data[]["lats"])
-#    end
 
     # Update display
     maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["lons"], loaded_data[]["lats"])
