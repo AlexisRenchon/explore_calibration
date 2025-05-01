@@ -12,6 +12,7 @@ using Bonito
 using JLD2
 using Statistics
 using Printf
+using LinearAlgebra
 
 # These will be in EKP get_metadata in the future
 include("make_training_locations.jl")
@@ -46,7 +47,6 @@ function slicevar(v, n, n_vars)
 
     return v[idx]
 end
-
 
 function add_seasonal_access(data_dict, vars)
     result = Dict{Any, Any}()
@@ -98,6 +98,25 @@ function add_seasonal_access_g(data_dict, vars)
     return result
 end
 
+function add_seasonal_access_gamma(data_dict, vars)
+    result = Dict{String, Dict{String, Vector{Float64}}}()
+
+    for var_key in vars
+        if haskey(data_dict, var_key)
+            values = data_dict[var_key]
+            # Create seasonal slices for each specified variable
+            result[var_key] = Dict{String, Vector{Float64}}(
+                                                            "DJF" => values[1:4:end],
+                                                            "MAM" => values[2:4:end],
+                                                            "JJA" => values[3:4:end],
+                                                            "SON" => values[4:4:end]
+                                                           )
+        end
+    end
+
+    return result
+end
+
 # Calculate mean lat weight averaged
 function cosine_weighted_global_mean(values::Vector{Float64}, lats::Vector{Float64})
     @assert length(values) == length(lats) "Length mismatch between values and latitudes"
@@ -134,7 +153,8 @@ function load_and_process_data(eki_file, prior_file, variable_file, locations_fi
     y_all = [EKP.get_obs(y_obs[i]) for i in 1:n_iterations]
 
     # Get all gamma (noise)
-    # noise = EKP.get_obs_noise_cov(eki, build = false)
+    noise = EKP.get_obs_noise_cov(eki, build = false)
+    noise_variance = reduce(vcat, [diag(m) for m in noise])
     # Ollie: how do I get a vector of same length as y_all
 
     # Get all constrained parameters
@@ -175,9 +195,16 @@ function load_and_process_data(eki_file, prior_file, variable_file, locations_fi
         end
     end
 
+    # Process gamma_data
+    gamma_data = Dict()
+    for (var_idx, var_name) in enumerate(variable_list)
+        gamma_data[var_name] = slicevar(noise_variance, var_idx, n_vars)
+    end
+
     # Create structures with seasonal access
     seasonal_y_data = add_seasonal_access(y_data, variable_list)
     seasonal_g_data = add_seasonal_access_g(g_data, variable_list)
+    seasonal_gamma_data = add_seasonal_access_gamma(gamma_data, variable_list)
 
     # Extract locations
     lons = map(x -> x[1], locations)
@@ -218,13 +245,14 @@ function load_and_process_data(eki_file, prior_file, variable_file, locations_fi
                 "g_data" => g_data,
                 "seasonal_y_data" => seasonal_y_data,
                 "seasonal_g_data" => seasonal_g_data,
+                "seasonal_gamma_data" => seasonal_gamma_data,
                 "lons" => lons,
                 "lats" => lats,
                 "rmse_benchmarks" => rmse_benchmarks
                )
 end
 
-function update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, ax_gy, seasonal_g_data, seasonal_y_data, lons, lats)
+function update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_gamma, ax_anomalies, ax_sm, ax_gy, seasonal_g_data, seasonal_y_data, seasonal_gamma_data, lons, lats)
 
         # Use @lift to properly handle observables
     m_v = menu_var.value
@@ -234,6 +262,8 @@ function update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, 
 
     g = @lift(seasonal_g_data[$m_i][$m_m][$m_v][$m_s])
     y = @lift(seasonal_y_data[$m_i][$m_v][$m_s])
+    Γ = @lift(seasonal_gamma_data[$m_v][$m_s])
+
     anomalies = @lift($g .- $y)
     rmse_y_g = @lift(string("RMSE = ", round(RMSE($g, $y), digits=1), " W m⁻²"))
 
@@ -247,6 +277,7 @@ function update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, 
 
     p_g = heatmap!(ax_g, lons, lats, g, colorrange = limits_p)
     p_y = heatmap!(ax_y, lons, lats, y, colorrange = limits_p)
+    p_gamma = heatmap!(ax_gamma, lons, lats, Γ, colorrange = (0,50))
     p_ano = heatmap!(ax_anomalies, lons, lats, anomalies, colorrange = limits_ano, colormap = cgrad(:bluesreds, categorical = false), highclip = :red, lowclip = :blue)
 
     cl = @lift($m_v * " (W m⁻²)")
@@ -254,6 +285,8 @@ function update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, 
 
     cl_ano = @lift($m_v * " (W m⁻²)")
     cb_ano = Colorbar(fig[2, 3], colorrange = limits_ano, label = cl_ano, height = 300, tellheight = false, colormap = cgrad(:bluesreds, categorical = false), highclip = :red, lowclip = :blue)
+
+    cb_gamma = Colorbar(fig[3, 3], colorrange = (0, 50), label = cl, height = 300, tellheight = false)
 
     y_seasonal_means = @lift([cosine_weighted_global_mean(seasonal_y_data[$m_i][$m_v][season], lats) for season in ["DJF", "MAM", "JJA", "SON"]])
     y_seasonal_means_1 = @lift([cosine_weighted_global_mean(seasonal_y_data[1][$m_v][season], lats) for season in ["DJF", "MAM", "JJA", "SON"]])
@@ -357,6 +390,11 @@ app = App(title="CliCal v0.2.0") do
                               title = "Anomalies: ClimaLand (g) - Era5 (y)",
                              )
 #    lines!(ax_anomalies, GM.coastlines())
+    ax_gamma = GM.GeoAxis(
+                              fig[3, 2];
+                              dest = "+proj=wintri",
+                              title = "Noise variance (Γ)",
+                             )
 
     ax_sm = Axis(fig[2, 1],
                  title = "Seasonal means",
@@ -425,11 +463,11 @@ app = App(title="CliCal v0.2.0") do
             menu_m.options[] = 1:loaded_data[]["n_ensembles"]
 
             # Update display
-            maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, ax_gy, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["lons"], loaded_data[]["lats"])
+            maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_gamma, ax_anomalies, ax_sm, ax_gy, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["seasonal_gamma_data"], loaded_data[]["lons"], loaded_data[]["lats"])
         end
 
     # Update display
-    maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_anomalies, ax_sm, ax_gy, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["lons"], loaded_data[]["lats"])
+    maps = update_fig(load_button, menu_calibration, menu_var, menu_iter, menu_m, menu_season, fig, ax_y, ax_g, ax_gamma, ax_anomalies, ax_sm, ax_gy, loaded_data[]["seasonal_g_data"], loaded_data[]["seasonal_y_data"], loaded_data[]["seasonal_gamma_data"], loaded_data[]["lons"], loaded_data[]["lats"])
 
     # Return the main layout
     return DOM.div(
